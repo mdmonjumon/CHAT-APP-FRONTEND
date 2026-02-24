@@ -10,18 +10,20 @@ import {
   Camera,
   X,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
 import useAuth from "../hooks/useAuth";
+import useAxiosSecure from "../hooks/useAxiosSecure";
 
 const SignUp = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [imgFile, setImgFile] = useState(null);
   const [selectedImg, setSelectedImg] = useState(null);
   const fileInputRef = useRef(null);
-  const { createUser } = useAuth();
-
+  const { createUser, signOutUser } = useAuth();
+  const navigate = useNavigate();
+  const axiosSecure = useAxiosSecure();
   const {
     register,
     handleSubmit,
@@ -52,12 +54,32 @@ const SignUp = () => {
   };
 
   const onSubmit = async (data) => {
-    if (!imgFile) {
-      return toast.error("Please select an image");
+    try {
+      if (!imgFile) {
+        return toast.error("Please select an image");
+      }
+      const imgUrl = await uploadImage(imgFile);
+      const userCredential = await createUser(data?.email, data?.password);
+      const user = userCredential.user;
+      const token = await user.getIdToken();
+
+      const userInfo = {
+        firebaseUid: user?.uid,
+        fullName: data?.fullName,
+        email: user?.email,
+        profilePic: imgUrl,
+      };
+
+      await axiosSecure.post("/auth/signup", userInfo, {
+        headers: { Authorization: `Bearer:${token}` },
+      });
+      await signOutUser();
+      navigate("/login");
+      
+    } catch (error) {
+      console.error(error.message);
+      toast.error(error.message);
     }
-    const imgUrl = await uploadImage(imgFile);
-    await createUser(data.email, data?.password);
-    
   };
 
   return (

@@ -14,7 +14,7 @@ import { Link, useNavigate } from "react-router-dom";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
 import useAuth from "../hooks/useAuth";
-import useAxiosSecure from "../hooks/useAxiosSecure";
+import axios from "axios";
 
 const SignUp = () => {
   const [showPassword, setShowPassword] = useState(false);
@@ -23,7 +23,6 @@ const SignUp = () => {
   const fileInputRef = useRef(null);
   const { createUser, signOutUser } = useAuth();
   const navigate = useNavigate();
-  const axiosSecure = useAxiosSecure();
   const {
     register,
     handleSubmit,
@@ -62,20 +61,19 @@ const SignUp = () => {
       const userCredential = await createUser(data?.email, data?.password);
       const user = userCredential.user;
       const token = await user.getIdToken();
-
       const userInfo = {
-        firebaseUid: user?.uid,
         fullName: data?.fullName,
-        email: user?.email,
         profilePic: imgUrl,
       };
-
-      await axiosSecure.post("/auth/signup", userInfo, {
-        headers: { Authorization: `Bearer:${token}` },
-      });
+      await axios.post(
+        `${import.meta.env.VITE_API_LINK}/auth/signup`,
+        userInfo,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       await signOutUser();
       navigate("/login");
-      
     } catch (error) {
       console.error(error.message);
       toast.error(error.message);

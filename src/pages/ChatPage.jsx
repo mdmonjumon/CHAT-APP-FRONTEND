@@ -14,11 +14,15 @@ import {
 } from "lucide-react";
 import useAuth from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import useAxiosSecure from "../hooks/useAxiosSecure";
+import LoadingSpinner from "../components/LoadingSpinner";
 
 const ChatPage = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { signOutUser } = useAuth();
   const navigate = useNavigate();
+  const axiosSecure = useAxiosSecure();
 
   // Mock user data (This would eventually come from your Auth Context)
   const currentUser = {
@@ -35,6 +39,21 @@ const ChatPage = () => {
       console.error(error);
     }
   };
+
+  // retrieve all users
+  const { data:allUsers, isLoading } = useQuery({
+    queryKey: ["users"],
+    queryFn: async () => {
+      const { data } = await axiosSecure.get("/allUsers/users");
+      return data.data;
+    },
+  });
+
+  
+  if(isLoading){
+    return <LoadingSpinner></LoadingSpinner>
+  }
+  console.log(allUsers);
 
   return (
     <div className="h-screen bg-base-200 flex overflow-hidden relative">
@@ -79,20 +98,20 @@ const ChatPage = () => {
 
         {/* Contacts List (Scrollable area) */}
         <div className="overflow-y-auto flex-1">
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+          {allUsers.map((user) => (
             <div
-              key={i}
+              key={user?._id}
               onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 p-4 hover:bg-base-200 cursor-pointer transition-colors"
             >
               <div className="avatar online">
                 <div className="w-12 rounded-full">
-                  <img src={`https://i.pravatar.cc/150?u=${i + 20}`} />
+                  <img src={user?.profilePic} />
                 </div>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-baseline">
-                  <span className="font-bold truncate">User {i}</span>
+                  <span className="font-bold truncate">{user?.fullName}</span>
                   <span className="text-xs opacity-50">12:45 PM</span>
                 </div>
                 <p className="text-sm opacity-60 truncate">
@@ -199,7 +218,7 @@ const ChatPage = () => {
               <textarea
                 rows="1"
                 placeholder="Type a message..."
-                className="textarea textarea-bordered w-full resize-none min-h-10 max-h-32 py-2 md:py-3 focus:outline-primary bg-base-200/50 leading-tight"
+                className="textarea textarea-bordered w-full resize-none min-h-10 max-h-32 py-2 md:py-3 focus:outline-primary bg-base-200/50 leading-tight outline-0"
                 onInput={(e) => {
                   e.target.style.height = "auto";
                   e.target.style.height = e.target.scrollHeight + "px";

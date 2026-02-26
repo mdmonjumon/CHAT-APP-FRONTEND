@@ -18,7 +18,7 @@ import { useNavigate } from "react-router-dom";
 const ChatPage = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { signOutUser } = useAuth();
-  const navigate = useNavigate()
+  const navigate = useNavigate();
 
   // Mock user data (This would eventually come from your Auth Context)
   const currentUser = {
@@ -30,8 +30,7 @@ const ChatPage = () => {
   const handleLogout = async () => {
     try {
       await signOutUser();
-      navigate("/login")
-
+      navigate("/login");
     } catch (error) {
       console.error(error);
     }
@@ -170,12 +169,54 @@ const ChatPage = () => {
           </div>
         </div>
 
-        <div className="p-4 bg-base-100 border-t border-base-300">
-          <input
-            type="text"
-            placeholder="Type a message..."
-            className="input input-bordered w-full"
-          />
+        {/* --- MESSAGE INPUT SECTION --- */}
+        <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 w-full">
+          <div className="flex items-end gap-2 max-w-6xl mx-auto">
+            {/* Actions Group (Emoji & Attachment) */}
+            <div className="flex items-center pb-1">
+              {/* Emoji Button - Hidden on very small screens to save space, or kept as icons */}
+              <button
+                type="button"
+                className="btn btn-ghost btn-circle btn-sm md:btn-md text-base-content/60 hover:text-primary"
+                title="Add emoji"
+              >
+                <Smile size={20} className="md:w-6 md:h-6" />
+              </button>
+
+              {/* Attachment Button */}
+              <label className="btn btn-ghost btn-circle btn-sm md:btn-md text-base-content/60 hover:text-primary cursor-pointer">
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => console.log(e.target.files[0])}
+                />
+                <Image size={20} className="md:w-6 md:h-6" />
+              </label>
+            </div>
+
+            {/* Message Input Field */}
+            <div className="flex-1">
+              <textarea
+                rows="1"
+                placeholder="Type a message..."
+                className="textarea textarea-bordered w-full resize-none min-h-10 max-h-32 py-2 md:py-3 focus:outline-primary bg-base-200/50 leading-tight"
+                onInput={(e) => {
+                  e.target.style.height = "auto";
+                  e.target.style.height = e.target.scrollHeight + "px";
+                }}
+              />
+            </div>
+
+            {/* Send Button */}
+            <div className="pb-1">
+              <button
+                className="btn btn-primary btn-circle h-10 w-10 md:h-12 md:w-12 min-h-0 shadow-md hover:scale-105 active:scale-95 transition-all"
+                onClick={() => console.log("Message sent!")}
+              >
+                <Send size={18} className="md:w-5 md:h-5 ml-0.5" />
+              </button>
+            </div>
+          </div>
         </div>
       </main>
     </div>

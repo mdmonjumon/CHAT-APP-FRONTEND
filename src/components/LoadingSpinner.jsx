@@ -1,8 +1,8 @@
-import React from "react";
+
 
 const LoadingSpinner = () => {
   return (
-    <div className="flex items-center justify-center w-full h-full min-h-[200px]">
+    <div className="flex items-center justify-center w-full h-screen">
       <span className="loading loading-spinner loading-lg text-primary"></span>
     </div>
   );

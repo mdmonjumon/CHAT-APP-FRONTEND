@@ -21,7 +21,7 @@ const SignUp = () => {
   const [imgFile, setImgFile] = useState(null);
   const [selectedImg, setSelectedImg] = useState(null);
   const fileInputRef = useRef(null);
-  const { createUser, signOutUser } = useAuth();
+  const { createUser, signOutUser, updateUserProfile } = useAuth();
   const navigate = useNavigate();
   const {
     register,
@@ -72,6 +72,7 @@ const SignUp = () => {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
+      await updateUserProfile(userInfo)
       await signOutUser();
       navigate("/login");
     } catch (error) {

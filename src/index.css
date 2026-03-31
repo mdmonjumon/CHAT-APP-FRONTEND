@@ -1,2 +1,25 @@
 @import "tailwindcss";
 @plugin "daisyui";
+
+@keyframes custom-ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.animate-status-ping {
+  animation: custom-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+
+.avatar-online {
+    @layer daisyui.l1.l2 {
+        &:before {
+            width: 20%;
+            height: 20%;
+            top: 5%;
+            right: 5%;
+        }
+    }
+}

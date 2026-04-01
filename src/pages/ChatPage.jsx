@@ -11,6 +11,7 @@ import {
   X,
   LogOut,
   Settings,
+  SquarePen,
 } from "lucide-react";
 import useAuth from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -19,11 +20,13 @@ import useAxiosSecure from "../hooks/useAxiosSecure";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ChatMessages from "../components/ChatMessages";
 import useMessages from "../hooks/useMessage";
+import CreateGroupModal from "../components/CreateGroupModal";
 
 const ChatPage = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const { signOutUser } = useAuth();
   const navigate = useNavigate();
@@ -199,8 +202,8 @@ const ChatPage = () => {
         </div>
 
         {/* Search */}
-        <div className="p-4">
-          <div className="relative">
+        <div className="p-4 flex gap-1 items-center">
+          <div className="relative flex-1">
             <Search
               className="absolute left-3 top-3 text-base-content/40"
               size={18}
@@ -210,6 +213,14 @@ const ChatPage = () => {
               placeholder="Search chats..."
               className="input input-bordered w-full pl-10 input-sm focus:outline-primary"
             />
+          </div>
+          {/* create group */}
+          <div
+            onClick={() => setIsModalOpen(true)}
+            className="btn tooltip"
+            data-tip="Create group"
+          >
+            <SquarePen />
           </div>
         </div>
 
@@ -431,6 +442,15 @@ const ChatPage = () => {
           </div>
         </div>
       </main>
+
+      {/* --- CREATE GROUP MODAL --- */}
+      {isModalOpen && (
+        <CreateGroupModal
+          allUsers={allUsers}
+          axiosSecure={axiosSecure}
+          onClose={() => setIsModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

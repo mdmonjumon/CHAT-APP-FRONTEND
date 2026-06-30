@@ -28,13 +28,25 @@ const MessageItem = ({ message, isOwnMessage }) => {
 
       {/* Message Bubble */}
       <div
-        className={`chat-bubble max-w-[85%] md:max-w-[70%] text-sm text--50 md:text-base shadow-sm ${
+        className={`chat-bubble max-w-[85%] md:max-w-[70%] text-sm md:text-base shadow-sm ${
           isOwnMessage
             ? "bg-primary text-primary-content"
             : "bg-base-200 text-base-content"
         }`}
       >
-        {message?.text}
+        {message?.messageType === "image" && message?.image ? (
+          <div className="flex flex-col gap-2">
+            <img
+              src={message.image}
+              alt="Sent attachment"
+              className="rounded-lg max-w-full h-auto max-h-60 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={() => window.open(message.image, "_blank")}
+            />
+            {message.text && <p>{message.text}</p>}
+          </div>
+        ) : (
+          message?.text
+        )}
       </div>
 
       {/* Delivery Status (Only for own messages) */}

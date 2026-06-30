@@ -2,11 +2,13 @@ import Select, { components } from "react-select";
 import { useState } from "react";
 import useAxiosSecure from "../hooks/useAxiosSecure";
 import { X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 const CreateGroupModal = ({ allUsers, onClose }) => {
   const [chatName, setChatName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
   const axiosSecure = useAxiosSecure();
+  const queryClient = useQueryClient();
 
   // ম্যাপ করে ড্রপডাউনের ফরম্যাটে নেওয়া
   const userOptions = allUsers.map((u) => ({
@@ -29,6 +31,7 @@ const CreateGroupModal = ({ allUsers, onClose }) => {
     try {
       const { data } = await axiosSecure.post("/message/create-group", payload);
       console.log("Group Created:", data);
+      await queryClient.invalidateQueries({ queryKey: ["groups"] });
       onClose();
     } catch (err) {
       console.error(err);

@@ -21,12 +21,19 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import ChatMessages from "../components/ChatMessages";
 import useMessages from "../hooks/useMessage";
 import CreateGroupModal from "../components/CreateGroupModal";
+import uploadImage from "../api/utils";
+import toast from "react-hot-toast";
+import { formatDistanceToNow } from "date-fns";
 
 const ChatPage = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
 
   const { signOutUser } = useAuth();
   const navigate = useNavigate();
@@ -35,6 +42,7 @@ const ChatPage = () => {
   const messageRef = useRef();
   const sidebarRef = useRef();
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
 
   // retrieve message
@@ -81,6 +89,9 @@ const ChatPage = () => {
 
         return updatedUsers;
       });
+
+      // Invalidate groups to update dynamic message preview
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
     };
 
     socket.on("receive_message", handleMessageReceive);
@@ -111,46 +122,96 @@ const ChatPage = () => {
     },
   });
 
+  // retrieve all groups
+  const { data: groups = [], isLoading: isGroupsLoading } = useQuery({
+    queryKey: ["groups"],
+    queryFn: async () => {
+      const { data } = await axiosSecure.get("/message/groups");
+      return data.data || [];
+    },
+  });
+
   // select contact and get conversation id
-  const handleSelectContact = async (user) => {
+  const handleSelectContact = async (contact) => {
     setIsSidebarOpen(false);
-    setSelectedUser(user);
+    setSelectedUser(contact);
+    setSelectedGroup(null);
 
     const { data } = await axiosSecure.post(
       "/message/getOrCreateConversation",
-      { receiverId: user?._id },
+      { receiverId: contact?._id },
     );
     setSelectedConversationId(data?.data?._id);
   };
+
+  // select group conversation
+  const handleSelectGroup = (group) => {
+    setIsSidebarOpen(false);
+    setSelectedUser(null);
+    setSelectedGroup(group);
+    setSelectedConversationId(group?._id);
+  };
+
+  // attachment change handler
+  const handleAttachmentChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select an image file");
+      return;
+    }
+
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImagePreview(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   // send message
-  const sendMessage = async (message) => {
-    if (!message.trim()) return;
+  const sendMessage = async (messageText) => {
+    if (!messageText.trim() && !imageFile) return;
     try {
+      let imageUrl = "";
+      if (imageFile) {
+        imageUrl = await uploadImage(imageFile);
+      }
+
       await axiosSecure.post("/message/send", {
         conversationId: selectedConversationId,
-        message: message,
+        message: messageText,
+        messageType: imageUrl ? "image" : "text",
+        image: imageUrl,
       });
 
-      queryClient.setQueryData(["users"], (oldUsers) => {
-        console.log("old Users ====>", oldUsers);
-        if (!oldUsers) return [];
+      if (selectedUser) {
+        queryClient.setQueryData(["users"], (oldUsers) => {
+          if (!oldUsers) return [];
 
-        const updatedUsers = [...oldUsers];
-        console.log(updatedUsers);
-        const targetIndex = updatedUsers.findIndex(
-          (u) => u?.firebaseUid === selectedUser?.firebaseUid,
-        );
-        if (targetIndex !== -1) {
-          const [targetUser] = updatedUsers.splice(targetIndex, 1);
-          return [targetUser, ...updatedUsers];
-        }
+          const updatedUsers = [...oldUsers];
+          const targetIndex = updatedUsers.findIndex(
+            (u) => u?.firebaseUid === selectedUser?.firebaseUid,
+          );
+          if (targetIndex !== -1) {
+            const [targetUser] = updatedUsers.splice(targetIndex, 1);
+            return [targetUser, ...updatedUsers];
+          }
 
-        return updatedUsers;
-      });
+          return updatedUsers;
+        });
+      }
+
+      // Invalidate groups to get fresh sidebar previews
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
 
       // message input field reset
       messageRef.current.value = "";
       messageRef.current.style.height = "auto";
+      setImageFile(null);
+      setImagePreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
       console.error(error);
     }
@@ -170,6 +231,14 @@ const ChatPage = () => {
       sendMessage(messageRef.current.value);
     }
   };
+
+  const filteredUsers = allUsers.filter((u) =>
+    u.fullName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredGroups = groups.filter((g) =>
+    g.chatName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   if (loading) {
     return <LoadingSpinner></LoadingSpinner>;
@@ -211,6 +280,8 @@ const ChatPage = () => {
             <input
               type="text"
               placeholder="Search chats..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="input input-bordered w-full pl-10 input-sm focus:outline-primary"
             />
           </div>
@@ -224,37 +295,95 @@ const ChatPage = () => {
           </div>
         </div>
 
-        {/* Contacts List (Scrollable area) */}
-        {isUserLoading ? (
-          <LoadingSpinner></LoadingSpinner>
-        ) : (
-          <div ref={sidebarRef} className="overflow-y-auto flex-1">
-            {allUsers.map((user) => (
-              <div
-                key={user?._id}
-                onClick={() => handleSelectContact(user)}
-                className="flex items-center gap-3 p-4 hover:bg-base-200 cursor-pointer transition-colors"
-              >
-                <div
-                  className={`${onlineUsers.includes(user?.firebaseUid) ? "avatar-online" : ""} avatar`}
-                >
-                  <div className="w-14 rounded-full">
-                    <img src={user?.profilePic} />
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+          {/* Direct Messages Section */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="p-3 bg-base-200/50 flex justify-between items-center">
+              <span className="text-xs font-bold uppercase tracking-wider text-base-content/50">Direct Messages</span>
+            </div>
+            <div ref={sidebarRef} className="flex-1 overflow-y-auto">
+              {isUserLoading ? (
+                <div className="p-4 text-center"><LoadingSpinner /></div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="p-4 text-center text-sm text-base-content/40 italic">No users found</div>
+              ) : (
+                filteredUsers.map((userItem) => (
+                  <div
+                    key={userItem?._id}
+                    onClick={() => handleSelectContact(userItem)}
+                    className={`flex items-center gap-3 p-4 hover:bg-base-200 cursor-pointer transition-colors ${
+                      selectedUser?._id === userItem?._id ? "bg-base-200" : ""
+                    }`}
+                  >
+                    <div
+                      className={`${onlineUsers.includes(userItem?.firebaseUid) ? "avatar-online" : ""} avatar`}
+                    >
+                      <div className="w-14 rounded-full">
+                        <img src={userItem?.profilePic} alt={userItem?.fullName} />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline">
+                        <span className="font-bold truncate">
+                          {userItem?.fullName}
+                        </span>
+                        <span className="text-xs opacity-50">Active</span>
+                      </div>
+                      <p className="text-sm opacity-60 truncate">
+                        Click to message
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-baseline">
-                    <span className="font-bold truncate">{user?.fullName}</span>
-                    <span className="text-xs opacity-50">12:45 PM</span>
-                  </div>
-                  <p className="text-sm opacity-60 truncate">
-                    Message preview text...
-                  </p>
-                </div>
-              </div>
-            ))}
+                ))
+              )}
+            </div>
           </div>
-        )}
+
+          {/* Groups Section */}
+          <div className="flex-1 flex flex-col min-h-0 border-t border-base-300">
+            <div className="p-3 bg-base-200/50 flex justify-between items-center">
+              <span className="text-xs font-bold uppercase tracking-wider text-base-content/50">Groups</span>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {isGroupsLoading ? (
+                <div className="p-4 text-center"><LoadingSpinner /></div>
+              ) : filteredGroups.length === 0 ? (
+                <div className="p-4 text-center text-sm text-base-content/40 italic">No groups found</div>
+              ) : (
+                filteredGroups.map((group) => (
+                  <div
+                    key={group?._id}
+                    onClick={() => handleSelectGroup(group)}
+                    className={`flex items-center gap-3 p-4 hover:bg-base-200 cursor-pointer transition-colors ${
+                      selectedConversationId === group?._id ? "bg-base-200" : ""
+                    }`}
+                  >
+                    <div className="avatar placeholder">
+                      <div className="bg-primary text-primary-content rounded-full w-12 flex items-center justify-center font-bold">
+                        {group?.chatName?.substring(0, 2).toUpperCase()}
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline">
+                        <span className="font-bold truncate">{group?.chatName}</span>
+                        {group?.lastMessage && (
+                          <span className="text-xs opacity-50">
+                            {formatDistanceToNow(new Date(group.lastMessage.createdAt), { addSuffix: true })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm opacity-60 truncate">
+                        {group?.lastMessage
+                          ? `${group.lastMessage.senderId?.fullName || "System"}: ${group.lastMessage.messageType === "image" ? "📷 Image" : group.lastMessage.text}`
+                          : "No messages yet"}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* --- USER PROFILE & LOGOUT SECTION (Fixed at bottom) --- */}
         <div className="p-4 border-t border-base-300 bg-base-100">
@@ -291,7 +420,7 @@ const ChatPage = () => {
         </div>
       </aside>
 
-      {/* --- OVERLAY & MAIN CONTENT (Same as before) --- */}
+      {/* --- OVERLAY & MAIN CONTENT --- */}
       {isSidebarOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
@@ -352,17 +481,40 @@ const ChatPage = () => {
                 </div>
               </div>
             )}
+
+            {/* Group Info (Show only if selectedGroup exists) */}
+            {selectedGroup && (
+              <div className="flex items-center gap-3 animate-in fade-in duration-300">
+                <div className="avatar placeholder">
+                  <div className="w-10 md:w-12 bg-primary text-primary-content rounded-full ring ring-primary ring-offset-base-100 ring-offset-2 flex items-center justify-center font-bold text-sm md:text-base">
+                    {selectedGroup?.chatName?.substring(0, 2).toUpperCase()}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm md:text-base leading-tight">
+                    {selectedGroup?.chatName}
+                  </h3>
+                  <p className="text-xs opacity-50">
+                    {selectedGroup?.participants?.length || 0} members
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Header Actions (Right Side) */}
-          {selectedUser && (
+          {(selectedUser || selectedGroup) && (
             <div className="flex items-center gap-1 md:gap-2">
-              <button className="btn btn-ghost btn-sm btn-circle text-primary hidden sm:flex">
-                <Phone size={20} />
-              </button>
-              <button className="btn btn-ghost btn-sm btn-circle text-primary hidden sm:flex">
-                <Video size={20} />
-              </button>
+              {selectedUser && (
+                <>
+                  <button className="btn btn-ghost btn-sm btn-circle text-primary hidden sm:flex">
+                    <Phone size={20} />
+                  </button>
+                  <button className="btn btn-ghost btn-sm btn-circle text-primary hidden sm:flex">
+                    <Video size={20} />
+                  </button>
+                </>
+              )}
               <button className="btn btn-ghost btn-sm btn-circle opacity-60">
                 <MoreVertical size={20} />
               </button>
@@ -385,17 +537,38 @@ const ChatPage = () => {
           ) : (
             <div className="flex flex-col items-center justify-center h-full opacity-30 italic">
               <Smile size={48} className="mb-2" />
-              <p>Select a contact to start chatting</p>
+              <p>Select a contact or group to start chatting</p>
             </div>
           )}
         </div>
 
         {/* --- MESSAGE INPUT SECTION --- */}
-        <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 w-full">
-          <div className="flex items-end gap-2 max-w-6xl mx-auto">
+        <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 w-full flex flex-col gap-2">
+          {imagePreview && (
+            <div className="relative self-start group ml-14">
+              <img
+                src={imagePreview}
+                alt="Upload preview"
+                className="w-20 h-20 object-cover rounded-lg border border-base-300 shadow-md"
+              />
+              <button
+                onClick={() => {
+                  setImageFile(null);
+                  setImagePreview(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                className="absolute -top-2 -right-2 bg-error text-error-content rounded-full p-1 shadow-md hover:scale-110 transition-transform"
+                title="Remove image"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 max-w-6xl mx-auto w-full">
             {/* Actions Group (Emoji & Attachment) */}
             <div className="flex items-center pb-1">
-              {/* Emoji Button - Hidden on very small screens to save space, or kept as icons */}
+              {/* Emoji Button */}
               <button
                 type="button"
                 className="btn btn-ghost btn-circle btn-sm md:btn-md text-base-content/60 hover:text-primary"
@@ -408,8 +581,10 @@ const ChatPage = () => {
               <label className="btn btn-ghost btn-circle btn-sm md:btn-md text-base-content/60 hover:text-primary cursor-pointer">
                 <input
                   type="file"
+                  accept="image/*"
                   className="hidden"
-                  onChange={(e) => console.log(e.target.files[0])}
+                  ref={fileInputRef}
+                  onChange={handleAttachmentChange}
                 />
                 <Image size={20} className="md:w-6 md:h-6" />
               </label>

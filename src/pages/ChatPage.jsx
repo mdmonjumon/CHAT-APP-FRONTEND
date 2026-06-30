@@ -21,6 +21,8 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import ChatMessages from "../components/ChatMessages";
 import useMessages from "../hooks/useMessage";
 import CreateGroupModal from "../components/CreateGroupModal";
+import SettingsModal from "../components/SettingsModal";
+import GroupSettingsModal from "../components/GroupSettingsModal";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
@@ -31,6 +33,8 @@ const ChatPage = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -68,6 +72,7 @@ const ChatPage = () => {
 
   useEffect(() => {
     if (!socket) return;
+    
     const handleMessageReceive = (newMessage) => {
       if (newMessage.conversationId === selectedConversationId) {
         queryClient.setQueryData(
@@ -94,10 +99,19 @@ const ChatPage = () => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     };
 
+    const handleGroupUpdated = (updatedGroup) => {
+      if (selectedConversationId === updatedGroup._id) {
+        setSelectedGroup(updatedGroup);
+      }
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
+    };
+
     socket.on("receive_message", handleMessageReceive);
+    socket.on("group_updated", handleGroupUpdated);
 
     return () => {
       socket.off("receive_message", handleMessageReceive);
+      socket.off("group_updated", handleGroupUpdated);
     };
   }, [socket, queryClient, selectedConversationId]);
 
@@ -358,9 +372,15 @@ const ChatPage = () => {
                       selectedConversationId === group?._id ? "bg-base-200" : ""
                     }`}
                   >
-                    <div className="avatar placeholder">
-                      <div className="bg-primary text-primary-content rounded-full w-12 flex items-center justify-center font-bold">
-                        {group?.chatName?.substring(0, 2).toUpperCase()}
+                    <div className="avatar">
+                      <div className="w-12 rounded-full ring-1 ring-base-300">
+                        {group?.groupProfilePic ? (
+                          <img src={group.groupProfilePic} alt={group.chatName} className="rounded-full object-cover" />
+                        ) : (
+                          <div className="bg-primary text-primary-content w-full h-full flex items-center justify-center font-bold rounded-full">
+                            {group?.chatName?.substring(0, 2).toUpperCase()}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -405,7 +425,11 @@ const ChatPage = () => {
             </div>
 
             <div className="flex gap-1">
-              <button className="btn btn-ghost btn-sm btn-circle text-base-content/60 hover:text-primary">
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="btn btn-ghost btn-sm btn-circle text-base-content/60 hover:text-primary"
+                title="Settings"
+              >
                 <Settings size={18} />
               </button>
               <button
@@ -484,10 +508,19 @@ const ChatPage = () => {
 
             {/* Group Info (Show only if selectedGroup exists) */}
             {selectedGroup && (
-              <div className="flex items-center gap-3 animate-in fade-in duration-300">
-                <div className="avatar placeholder">
-                  <div className="w-10 md:w-12 bg-primary text-primary-content rounded-full ring ring-primary ring-offset-base-100 ring-offset-2 flex items-center justify-center font-bold text-sm md:text-base">
-                    {selectedGroup?.chatName?.substring(0, 2).toUpperCase()}
+              <div 
+                className="flex items-center gap-3 animate-in fade-in duration-300 cursor-pointer hover:opacity-85 transition-opacity"
+                onClick={() => setIsGroupSettingsOpen(true)}
+              >
+                <div className="avatar">
+                  <div className="w-10 md:w-12 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2 flex items-center justify-center font-bold text-sm md:text-base">
+                    {selectedGroup?.groupProfilePic ? (
+                      <img src={selectedGroup.groupProfilePic} alt={selectedGroup.chatName} className="rounded-full object-cover" />
+                    ) : (
+                      <div className="bg-primary text-primary-content w-full h-full flex items-center justify-center rounded-full">
+                        {selectedGroup?.chatName?.substring(0, 2).toUpperCase()}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -515,9 +548,20 @@ const ChatPage = () => {
                   </button>
                 </>
               )}
-              <button className="btn btn-ghost btn-sm btn-circle opacity-60">
-                <MoreVertical size={20} />
-              </button>
+              {selectedGroup && (
+                <button 
+                  className="btn btn-ghost btn-sm btn-circle opacity-60"
+                  onClick={() => setIsGroupSettingsOpen(true)}
+                  title="Group Settings"
+                >
+                  <MoreVertical size={20} />
+                </button>
+              )}
+              {selectedUser && (
+                <button className="btn btn-ghost btn-sm btn-circle opacity-60">
+                  <MoreVertical size={20} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -624,6 +668,27 @@ const ChatPage = () => {
           allUsers={allUsers}
           axiosSecure={axiosSecure}
           onClose={() => setIsModalOpen(false)}
+        />
+      )}
+
+      {/* --- SETTINGS MODAL --- */}
+      {isSettingsOpen && (
+        <SettingsModal
+          axiosSecure={axiosSecure}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      )}
+
+      {/* --- GROUP SETTINGS MODAL --- */}
+      {isGroupSettingsOpen && selectedGroup && (
+        <GroupSettingsModal
+          group={selectedGroup}
+          axiosSecure={axiosSecure}
+          onGroupUpdated={(updatedGroup) => {
+            setSelectedGroup(updatedGroup);
+            queryClient.invalidateQueries({ queryKey: ["groups"] });
+          }}
+          onClose={() => setIsGroupSettingsOpen(false)}
         />
       )}
     </div>

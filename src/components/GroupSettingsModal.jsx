@@ -1,15 +1,16 @@
 import React, { useState, useRef } from "react";
-import { X, Camera, Users, Award, ShieldAlert } from "lucide-react";
+import { X, Camera, Users, Award, UserPlus, UserMinus } from "lucide-react";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
 import useAuth from "../hooks/useAuth";
 
-const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => {
+const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated, allUsers = [] }) => {
   const { user } = useAuth();
   const [chatName, setChatName] = useState(group?.chatName || "");
   const [imgFile, setImgFile] = useState(null);
   const [selectedImg, setSelectedImg] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedUserToAdd, setSelectedUserToAdd] = useState("");
   const fileInputRef = useRef(null);
 
   // Find current user's participant doc to check if they are the admin
@@ -105,6 +106,71 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
     }
   };
 
+  const handleAddMember = async () => {
+    if (!selectedUserToAdd || isUpdating) return;
+
+    setIsUpdating(true);
+    const loadingToast = toast.loading("Adding member to group...");
+
+    try {
+      const { data } = await axiosSecure.patch(`/message/groups/${group?._id}/members`, {
+        targetUserId: selectedUserToAdd,
+        action: "add",
+      });
+
+      if (data.success) {
+        toast.success("Member added successfully", { id: loadingToast });
+        setSelectedUserToAdd("");
+        if (onGroupUpdated) {
+          onGroupUpdated(data.data);
+        }
+      } else {
+        throw new Error(data.message || "Failed to add member");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to add member", { id: loadingToast });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleRemoveMember = async (targetUserId) => {
+    if (isUpdating) return;
+
+    const confirmRemove = window.confirm("Are you sure you want to remove this member from the group?");
+    if (!confirmRemove) return;
+
+    setIsUpdating(true);
+    const loadingToast = toast.loading("Removing member from group...");
+
+    try {
+      const { data } = await axiosSecure.patch(`/message/groups/${group?._id}/members`, {
+        targetUserId,
+        action: "remove",
+      });
+
+      if (data.success) {
+        toast.success("Member removed successfully", { id: loadingToast });
+        if (onGroupUpdated) {
+          onGroupUpdated(data.data);
+        }
+      } else {
+        throw new Error(data.message || "Failed to remove member");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to remove member", { id: loadingToast });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Filter out users who are already in the group
+  const nonMembers = allUsers.filter(
+    (u) => !group?.participants?.some((p) => p._id === u._id)
+  );
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-base-100 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in duration-200">
@@ -115,7 +181,7 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
           </button>
         </div>
 
-        <form onSubmit={handleUpdateGroup} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+        <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
           {/* Group Avatar Upload */}
           <div className="flex flex-col items-center gap-2">
             <div className="relative group">
@@ -125,7 +191,7 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
                 ) : group?.groupProfilePic ? (
                   <img src={group.groupProfilePic} alt="Group Avatar" className="w-full h-full object-cover" />
                 ) : (
-                  <div className="bg-primary text-primary-content w-full h-full flex items-center justify-center">
+                  <div className="bg-primary text-primary-content w-full h-full flex items-center justify-center rounded-full">
                     {chatName?.substring(0, 2).toUpperCase()}
                   </div>
                 )}
@@ -149,29 +215,69 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
             <span className="text-xs opacity-50">Upload group profile picture</span>
           </div>
 
-          {/* Group Name */}
-          <div className="form-control">
-            <label className="label">
-              <span className="label-text font-semibold">Group Name</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-base-content/40">
-                <Users size={18} />
+          <form onSubmit={handleUpdateGroup} className="space-y-4">
+            {/* Group Name */}
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text font-semibold">Group Name</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-base-content/40">
+                  <Users size={18} />
+                </div>
+                <input
+                  type="text"
+                  className="input input-bordered w-full pl-10 focus:outline-primary"
+                  value={chatName}
+                  onChange={(e) => setChatName(e.target.value)}
+                  placeholder="Dream Team"
+                  required
+                  disabled={isUpdating}
+                />
               </div>
-              <input
-                type="text"
-                className="input input-bordered w-full pl-10 focus:outline-primary"
-                value={chatName}
-                onChange={(e) => setChatName(e.target.value)}
-                placeholder="Dream Team"
-                required
-                disabled={isUpdating}
-              />
             </div>
-          </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="submit" className="btn btn-primary px-8 btn-sm" disabled={isUpdating}>
+                Update Name/Pic
+              </button>
+            </div>
+          </form>
+
+          {/* Add member section */}
+          {isCurrentUserAdmin && nonMembers.length > 0 && (
+            <div className="form-control border-t border-base-300 pt-4">
+              <label className="label">
+                <span className="label-text font-semibold">Add New Member</span>
+              </label>
+              <div className="flex gap-2">
+                <select
+                  className="select select-bordered flex-1 select-sm focus:outline-primary"
+                  value={selectedUserToAdd}
+                  onChange={(e) => setSelectedUserToAdd(e.target.value)}
+                  disabled={isUpdating}
+                >
+                  <option value="">Select a user...</option>
+                  {nonMembers.map((u) => (
+                    <option key={u._id} value={u._id}>
+                      {u.fullName}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddMember}
+                  className="btn btn-primary btn-sm"
+                  disabled={!selectedUserToAdd || isUpdating}
+                >
+                  <UserPlus size={16} /> Add
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Members list */}
-          <div className="divider text-xs opacity-40 uppercase tracking-widest">Members ({group?.participants?.length})</div>
+          <div className="divider text-xs opacity-40 uppercase tracking-widest border-t border-base-300 pt-4">Members ({group?.participants?.length})</div>
 
           <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
             {group?.participants?.map((member) => (
@@ -192,16 +298,30 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
                     <span className="badge badge-primary gap-1 text-[10px] uppercase font-bold py-2">
                       <Award size={10} /> Admin
                     </span>
-                  ) : isCurrentUserAdmin ? (
-                    <button
-                      type="button"
-                      onClick={() => handleMakeAdmin(member?._id)}
-                      className="btn btn-xs btn-outline btn-primary gap-1 text-[9px] uppercase font-bold"
-                      disabled={isUpdating}
-                    >
-                      Make Admin
-                    </button>
-                  ) : null}
+                  ) : (
+                    <div className="flex gap-1">
+                      {isCurrentUserAdmin && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleMakeAdmin(member?._id)}
+                            className="btn btn-xs btn-outline btn-primary text-[9px] uppercase font-bold"
+                            disabled={isUpdating}
+                          >
+                            Make Admin
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(member?._id)}
+                            className="btn btn-xs btn-outline btn-error text-[9px] uppercase font-bold"
+                            disabled={isUpdating}
+                          >
+                            <UserMinus size={10} /> Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -209,13 +329,10 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
 
           <div className="p-4 bg-base-200/50 rounded-xl flex justify-end gap-3 mt-6">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={isUpdating}>
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary px-8" disabled={isUpdating}>
-              {isUpdating ? "Saving..." : "Save Changes"}
+              Close
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

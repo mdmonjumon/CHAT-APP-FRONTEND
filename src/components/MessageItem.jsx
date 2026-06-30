@@ -1,7 +1,18 @@
 import { formatDistanceToNow } from "date-fns";
 
 const MessageItem = ({ message, isOwnMessage }) => {
-  
+  if (message?.messageType === "system") {
+    return (
+      <div className="flex justify-center my-4 animate-in fade-in duration-200 w-full">
+        <div className="bg-base-300/60 text-base-content/60 text-xs font-semibold px-4 py-1.5 rounded-full border border-base-300/10 shadow-sm max-w-[85%] text-center leading-normal">
+          {message?.text}
+        </div>
+      </div>
+    );
+  }
+
+  const isRead = message?.readBy && message?.readBy?.length > 1;
+
   return (
     <div className={`chat ${isOwnMessage ? "chat-end" : "chat-start"} mb-4`}>
       {/* User Avatar */}
@@ -49,9 +60,16 @@ const MessageItem = ({ message, isOwnMessage }) => {
         )}
       </div>
 
-      {/* Delivery Status (Only for own messages) */}
+      {/* Delivery/Read Status (Only for own messages) */}
       {isOwnMessage && (
-        <div className="chat-footer opacity-50 text-[10px] mt-1">Delivered</div>
+        <div className="chat-footer opacity-60 text-[10px] mt-1 flex items-center justify-end gap-1">
+          <span>{isRead ? "Seen" : "Delivered"}</span>
+          {isRead ? (
+            <span className="text-info font-bold text-xs" title="Seen">✓✓</span>
+          ) : (
+            <span className="text-base-content/40 text-xs" title="Delivered">✓✓</span>
+          )}
+        </div>
       )}
     </div>
   );

@@ -38,6 +38,7 @@ const ChatPage = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [typingUsers, setTypingUsers] = useState({});
 
   const { signOutUser } = useAuth();
   const navigate = useNavigate();
@@ -47,20 +48,31 @@ const ChatPage = () => {
   const sidebarRef = useRef();
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
   const queryClient = useQueryClient();
 
-  // retrieve message
-  const { data: messages = [], isLoading: isMessagesLoading } = useMessages(
-    selectedConversationId,
-  );
+  // retrieve paginated messages
+  const {
+    data: messagesData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: isMessagesLoading,
+  } = useMessages(selectedConversationId);
+
+  // Flatten infinite query pages
+  const messages = messagesData?.pages ? messagesData.pages.flatMap((page) => page) : [];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    // scroll to bottom on initial message load
+    if (messages.length > 0 && !isFetchingNextPage) {
+      scrollToBottom();
+    }
+  }, [selectedConversationId]);
 
   // socket.io start
 
@@ -70,6 +82,42 @@ const ChatPage = () => {
     }
   }, [socket, selectedConversationId]);
 
+  // Mark incoming messages as read
+  const markChatAsRead = async () => {
+    if (!selectedConversationId) return;
+    try {
+      await axiosSecure.patch(`/message/${selectedConversationId}/read`);
+      // Update local query state for ticks
+      queryClient.setQueryData(["messages", selectedConversationId], (oldData) => {
+        if (!oldData) return oldData;
+        const myMongoDoc = selectedGroup?.participants?.find(p => p.firebaseUid === user?.uid) ||
+                           allUsers.find(u => u.firebaseUid === user?.uid);
+        const myId = myMongoDoc?._id;
+        if (!myId) return oldData;
+
+        return {
+          ...oldData,
+          pages: oldData.pages.map(page =>
+            page.map(msg => {
+              if (msg.senderId?.firebaseUid !== user.uid && !msg.readBy.includes(myId)) {
+                return { ...msg, readBy: [...msg.readBy, myId] };
+              }
+              return msg;
+            })
+          ),
+        };
+      });
+    } catch (err) {
+      console.error("Failed to mark messages as read:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      markChatAsRead();
+    }
+  }, [selectedConversationId, messages.length]);
+
   useEffect(() => {
     if (!socket) return;
     
@@ -77,25 +125,25 @@ const ChatPage = () => {
       if (newMessage.conversationId === selectedConversationId) {
         queryClient.setQueryData(
           ["messages", newMessage.conversationId],
-          (oldData) => (oldData ? [...oldData, newMessage] : [newMessage]),
+          (oldData) => {
+            if (!oldData) return { pages: [[newMessage]], pageParams: [null] };
+            
+            const updatedPages = [...oldData.pages];
+            const lastPageIndex = updatedPages.length - 1;
+            updatedPages[lastPageIndex] = [...updatedPages[lastPageIndex], newMessage];
+            
+            return {
+              ...oldData,
+              pages: updatedPages,
+            };
+          }
         );
+        
+        if (newMessage.senderId?.firebaseUid !== user.uid) {
+          markChatAsRead();
+        }
       }
 
-      // ইউজার লিস্ট রি-অর্ডার
-      queryClient.setQueryData(["users"], (oldUsers) => {
-        if (!oldUsers) return [];
-        const updatedUsers = [...oldUsers];
-        const senderId = newMessage?.senderId?._id;
-        const targetIndex = updatedUsers.findIndex((u) => u?._id === senderId);
-        if (targetIndex !== -1) {
-          const [targetUser] = updatedUsers.splice(targetIndex, 1);
-          return [targetUser, ...updatedUsers];
-        }
-
-        return updatedUsers;
-      });
-
-      // Invalidate groups to update dynamic message preview
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     };
 
@@ -106,12 +154,53 @@ const ChatPage = () => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     };
 
+    const handleUserTyping = ({ conversationId, userId, fullName }) => {
+      if (conversationId === selectedConversationId) {
+        setTypingUsers((prev) => ({ ...prev, [userId]: fullName }));
+      }
+    };
+
+    const handleUserStopTyping = ({ conversationId, userId }) => {
+      if (conversationId === selectedConversationId) {
+        setTypingUsers((prev) => {
+          const copy = { ...prev };
+          delete copy[userId];
+          return copy;
+        });
+      }
+    };
+
+    const handleMessagesRead = ({ conversationId, userId }) => {
+      if (conversationId === selectedConversationId) {
+        queryClient.setQueryData(["messages", conversationId], (oldData) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            pages: oldData.pages.map(page =>
+              page.map(msg => {
+                if (msg.senderId?.firebaseUid === user.uid && !msg.readBy.includes(userId)) {
+                  return { ...msg, readBy: [...msg.readBy, userId] };
+                }
+                return msg;
+              })
+            ),
+          };
+        });
+      }
+    };
+
     socket.on("receive_message", handleMessageReceive);
     socket.on("group_updated", handleGroupUpdated);
+    socket.on("user_typing", handleUserTyping);
+    socket.on("user_stop_typing", handleUserStopTyping);
+    socket.on("messages_read", handleMessagesRead);
 
     return () => {
       socket.off("receive_message", handleMessageReceive);
       socket.off("group_updated", handleGroupUpdated);
+      socket.off("user_typing", handleUserTyping);
+      socket.off("user_stop_typing", handleUserStopTyping);
+      socket.off("messages_read", handleMessagesRead);
     };
   }, [socket, queryClient, selectedConversationId]);
 
@@ -184,50 +273,120 @@ const ChatPage = () => {
     reader.readAsDataURL(file);
   };
 
-  // send message
+  // Typing event handler
+  const handleTyping = () => {
+    if (!socket || !selectedConversationId) return;
+
+    socket.emit("typing", {
+      conversationId: selectedConversationId,
+      userId: user.uid,
+      fullName: user.displayName,
+    });
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit("stop_typing", {
+        conversationId: selectedConversationId,
+        userId: user.uid,
+      });
+    }, 1500);
+  };
+
+  // send message with Optimistic Updates
   const sendMessage = async (messageText) => {
     if (!messageText.trim() && !imageFile) return;
+
+    const tempId = `optimistic-${Date.now()}`;
+    const myMongoDoc = selectedGroup?.participants?.find(p => p.firebaseUid === user?.uid) || 
+                       allUsers.find(u => u.firebaseUid === user?.uid);
+    const myMongoId = myMongoDoc?._id || "my-temp-id";
+
+    const optimisticMsg = {
+      _id: tempId,
+      conversationId: selectedConversationId,
+      senderId: {
+        _id: myMongoId,
+        fullName: user.displayName,
+        profilePic: user.photoURL,
+        firebaseUid: user.uid,
+      },
+      text: messageText,
+      messageType: imageFile ? "image" : "text",
+      image: imagePreview,
+      readBy: [myMongoId],
+      createdAt: new Date().toISOString(),
+      isSending: true,
+    };
+
+    // Optimistically update cash
+    queryClient.setQueryData(["messages", selectedConversationId], (oldData) => {
+      if (!oldData) return { pages: [[optimisticMsg]], pageParams: [null] };
+      const updatedPages = [...oldData.pages];
+      const lastPageIndex = updatedPages.length - 1;
+      updatedPages[lastPageIndex] = [...updatedPages[lastPageIndex], optimisticMsg];
+      return {
+        ...oldData,
+        pages: updatedPages,
+      };
+    });
+
+    // Reset input fields
+    messageRef.current.value = "";
+    messageRef.current.style.height = "auto";
+    setImageFile(null);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    // Stop typing
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    socket.emit("stop_typing", {
+      conversationId: selectedConversationId,
+      userId: user.uid,
+    });
+
     try {
       let imageUrl = "";
       if (imageFile) {
         imageUrl = await uploadImage(imageFile);
       }
 
-      await axiosSecure.post("/message/send", {
+      const { data } = await axiosSecure.post("/message/send", {
         conversationId: selectedConversationId,
         message: messageText,
         messageType: imageUrl ? "image" : "text",
         image: imageUrl,
       });
 
-      if (selectedUser) {
-        queryClient.setQueryData(["users"], (oldUsers) => {
-          if (!oldUsers) return [];
+      // Replace optimistic message with actual Mongoose document
+      queryClient.setQueryData(["messages", selectedConversationId], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          pages: oldData.pages.map(page =>
+            page.map(msg => (msg._id === tempId ? data.data : msg))
+          ),
+        };
+      });
 
-          const updatedUsers = [...oldUsers];
-          const targetIndex = updatedUsers.findIndex(
-            (u) => u?.firebaseUid === selectedUser?.firebaseUid,
-          );
-          if (targetIndex !== -1) {
-            const [targetUser] = updatedUsers.splice(targetIndex, 1);
-            return [targetUser, ...updatedUsers];
-          }
-
-          return updatedUsers;
-        });
-      }
-
-      // Invalidate groups to get fresh sidebar previews
       queryClient.invalidateQueries({ queryKey: ["groups"] });
-
-      // message input field reset
-      messageRef.current.value = "";
-      messageRef.current.style.height = "auto";
-      setImageFile(null);
-      setImagePreview(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
       console.error(error);
+      // Remove optimistic message on fail
+      queryClient.setQueryData(["messages", selectedConversationId], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          pages: oldData.pages.map(page =>
+            page.filter(msg => msg._id !== tempId)
+          ),
+        };
+      });
+      toast.error("Failed to send message");
     }
   };
 
@@ -244,6 +403,20 @@ const ChatPage = () => {
       e.preventDefault();
       sendMessage(messageRef.current.value);
     }
+  };
+
+  const getGroupTypingText = () => {
+    const typingList = Object.entries(typingUsers)
+      .filter(([userId, name]) => {
+        const isParticipant = selectedGroup?.participants?.some(p => p.firebaseUid === userId);
+        return isParticipant && userId !== user?.uid;
+      })
+      .map(([userId, name]) => name);
+
+    if (typingList.length === 0) return null;
+    if (typingList.length === 1) return `${typingList[0]} is typing...`;
+    if (typingList.length === 2) return `${typingList[0]} and ${typingList[1]} are typing...`;
+    return "Multiple people are typing...";
   };
 
   const filteredUsers = allUsers.filter((u) =>
@@ -480,28 +653,34 @@ const ChatPage = () => {
                     {selectedUser?.fullName}
                   </h3>
 
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex h-2 w-2">
-                      {onlineUsers.includes(selectedUser?.firebaseUid) && (
-                        <span className="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
-                      )}
-                      <span
-                        className={`relative inline-flex rounded-full h-2 w-2 ${
-                          onlineUsers.includes(selectedUser?.firebaseUid)
-                            ? "bg-success"
-                            : "bg-slate-400"
-                        }`}
-                      ></span>
-                    </div>
-
-                    <p className="text-xs font-semibold tracking-wide">
-                      {onlineUsers.includes(selectedUser?.firebaseUid) ? (
-                        <span className="text-success">Online</span>
-                      ) : (
-                        <span className="text-base-content/40">Offline</span>
-                      )}
+                  {typingUsers[selectedUser?.firebaseUid] ? (
+                    <p className="text-xs text-primary font-bold animate-pulse">
+                      typing...
                     </p>
-                  </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex h-2 w-2">
+                        {onlineUsers.includes(selectedUser?.firebaseUid) && (
+                          <span className="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                        )}
+                        <span
+                          className={`relative inline-flex rounded-full h-2 w-2 ${
+                            onlineUsers.includes(selectedUser?.firebaseUid)
+                              ? "bg-success"
+                              : "bg-slate-400"
+                          }`}
+                        ></span>
+                      </div>
+
+                      <p className="text-xs font-semibold tracking-wide">
+                        {onlineUsers.includes(selectedUser?.firebaseUid) ? (
+                          <span className="text-success">Online</span>
+                        ) : (
+                          <span className="text-base-content/40">Offline</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -527,9 +706,15 @@ const ChatPage = () => {
                   <h3 className="font-bold text-sm md:text-base leading-tight">
                     {selectedGroup?.chatName}
                   </h3>
-                  <p className="text-xs opacity-50">
-                    {selectedGroup?.participants?.length || 0} members
-                  </p>
+                  {getGroupTypingText() ? (
+                    <p className="text-xs text-primary font-bold animate-pulse">
+                      {getGroupTypingText()}
+                    </p>
+                  ) : (
+                    <p className="text-xs opacity-50">
+                      {selectedGroup?.participants?.length || 0} members
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -566,7 +751,7 @@ const ChatPage = () => {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 bg-base-200/30">
+        <div className="flex-1 overflow-y-auto p-4 bg-base-200/30 flex flex-col">
           {/* Messages go here */}
 
           {selectedConversationId ? (
@@ -574,12 +759,18 @@ const ChatPage = () => {
               <LoadingSpinner></LoadingSpinner>
             ) : (
               <>
-                <ChatMessages messages={messages} currentUserUid={user?.uid} />
+                <ChatMessages
+                  messages={messages}
+                  currentUserUid={user?.uid}
+                  fetchNextPage={fetchNextPage}
+                  hasNextPage={hasNextPage}
+                  isFetchingNextPage={isFetchingNextPage}
+                />
                 <div ref={messagesEndRef} />
               </>
             )
           ) : (
-            <div className="flex flex-col items-center justify-center h-full opacity-30 italic">
+            <div className="flex flex-col items-center justify-center h-full opacity-30 italic flex-1">
               <Smile size={48} className="mb-2" />
               <p>Select a contact or group to start chatting</p>
             </div>
@@ -639,10 +830,11 @@ const ChatPage = () => {
               <textarea
                 ref={messageRef}
                 onKeyDown={handleKeyDown}
+                onInput={handleTyping}
                 rows="1"
                 placeholder="Type a message..."
                 className="textarea textarea-bordered w-full resize-none min-h-10 max-h-32 py-2 md:py-3 focus:outline-primary bg-base-200/50 leading-tight outline-0"
-                onInput={(e) => {
+                onChange={(e) => {
                   e.target.style.height = "auto";
                   e.target.style.height = e.target.scrollHeight + "px";
                 }}
@@ -683,6 +875,7 @@ const ChatPage = () => {
       {isGroupSettingsOpen && selectedGroup && (
         <GroupSettingsModal
           group={selectedGroup}
+          allUsers={allUsers}
           axiosSecure={axiosSecure}
           onGroupUpdated={(updatedGroup) => {
             setSelectedGroup(updatedGroup);

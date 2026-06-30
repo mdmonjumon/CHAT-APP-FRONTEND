@@ -1,14 +1,20 @@
 import React, { useState, useRef } from "react";
-import { X, Camera, Users, ShieldAlert, Award } from "lucide-react";
+import { X, Camera, Users, Award, ShieldAlert } from "lucide-react";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
+import useAuth from "../hooks/useAuth";
 
 const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => {
+  const { user } = useAuth();
   const [chatName, setChatName] = useState(group?.chatName || "");
   const [imgFile, setImgFile] = useState(null);
   const [selectedImg, setSelectedImg] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Find current user's participant doc to check if they are the admin
+  const currentUserDoc = group?.participants?.find((p) => p?.firebaseUid === user?.uid);
+  const isCurrentUserAdmin = currentUserDoc && group?.groupAdmin === currentUserDoc?._id;
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -64,6 +70,36 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
     } catch (err) {
       console.error(err);
       toast.error(err.message || "Failed to update group", { id: loadingToast });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleMakeAdmin = async (newAdminId) => {
+    if (isUpdating) return;
+    
+    const confirmTransfer = window.confirm("Are you sure you want to transfer group admin privileges to this member?");
+    if (!confirmTransfer) return;
+
+    setIsUpdating(true);
+    const loadingToast = toast.loading("Transferring admin privileges...");
+
+    try {
+      const { data } = await axiosSecure.patch(`/message/groups/${group?._id}/make-admin`, {
+        newAdminId,
+      });
+
+      if (data.success) {
+        toast.success("Admin role transferred successfully", { id: loadingToast });
+        if (onGroupUpdated) {
+          onGroupUpdated(data.data);
+        }
+      } else {
+        throw new Error(data.message || "Failed to transfer admin");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to transfer admin", { id: loadingToast });
     } finally {
       setIsUpdating(false);
     }
@@ -146,13 +182,27 @@ const GroupSettingsModal = ({ group, onClose, axiosSecure, onGroupUpdated }) => 
                       <img src={member?.profilePic} alt={member?.fullName} />
                     </div>
                   </div>
-                  <span className="text-sm font-medium">{member?.fullName}</span>
-                </div>
-                {group?.groupAdmin === member?._id ? (
-                  <span className="badge badge-primary gap-1 text-[10px] uppercase font-bold py-2">
-                    <Award size={10} /> Admin
+                  <span className="text-sm font-medium">
+                    {member?.fullName} {member?.firebaseUid === user?.uid && " (You)"}
                   </span>
-                ) : null}
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  {group?.groupAdmin === member?._id ? (
+                    <span className="badge badge-primary gap-1 text-[10px] uppercase font-bold py-2">
+                      <Award size={10} /> Admin
+                    </span>
+                  ) : isCurrentUserAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => handleMakeAdmin(member?._id)}
+                      className="btn btn-xs btn-outline btn-primary gap-1 text-[9px] uppercase font-bold"
+                      disabled={isUpdating}
+                    >
+                      Make Admin
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>

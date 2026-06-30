@@ -1,14 +1,15 @@
 import React, { useState, useRef } from "react";
-import { X, Camera, Lock, User, Check } from "lucide-react";
+import { X, Camera, Lock, User, KeyRound } from "lucide-react";
 import useAuth from "../hooks/useAuth";
 import uploadImage from "../api/utils";
 import toast from "react-hot-toast";
-import { updatePassword, updateProfile } from "firebase/auth";
+import { updatePassword, updateProfile, EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
 import { auth } from "../firebase/firebase.init";
 
 const SettingsModal = ({ onClose, axiosSecure }) => {
   const { user, setUser } = useAuth();
   const [fullName, setFullName] = useState(user?.displayName || "");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [imgFile, setImgFile] = useState(null);
@@ -37,6 +38,10 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
     e.preventDefault();
     if (isUpdating) return;
 
+    if (!currentPassword) {
+      return toast.error("Current password is required to verify identity");
+    }
+
     if (password && password !== confirmPassword) {
       return toast.error("Passwords do not match");
     }
@@ -45,12 +50,16 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
     }
 
     setIsUpdating(true);
-    const loadingToast = toast.loading("Updating settings...");
+    const loadingToast = toast.loading("Verifying password and updating profile...");
 
     try {
+      // 1. Reauthenticate user with current password
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+
       let finalImgUrl = user?.photoURL;
 
-      // 1. Upload image if selected
+      // 2. Upload image if selected
       if (imgFile) {
         finalImgUrl = await uploadImage(imgFile);
         if (!finalImgUrl) {
@@ -58,25 +67,25 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
         }
       }
 
-      // 2. Update Firebase user profile (name & image)
+      // 3. Update Firebase user profile (name & image)
       await updateProfile(auth.currentUser, {
         displayName: fullName,
         photoURL: finalImgUrl,
       });
 
-      // 3. Update MongoDB user record
+      // 4. Update MongoDB user record
       await axiosSecure.patch("/allUsers/update-profile", {
         fullName,
         profilePic: finalImgUrl,
       });
 
-      // 4. Update password if provided
+      // 5. Update password if provided
       if (password) {
         await updatePassword(auth.currentUser, password);
         toast.success("Password updated successfully");
       }
 
-      // 5. Reload Firebase user & update context state
+      // 6. Reload Firebase user & update context state
       await auth.currentUser.reload();
       setUser({ ...auth.currentUser });
 
@@ -84,7 +93,11 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
       onClose();
     } catch (err) {
       console.error(err);
-      toast.error(err.message || "Failed to update profile", { id: loadingToast });
+      let errMsg = err.message || "Failed to update profile";
+      if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+        errMsg = "Incorrect current password. Verification failed.";
+      }
+      toast.error(errMsg, { id: loadingToast });
     } finally {
       setIsUpdating(false);
     }
@@ -100,7 +113,7 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
           </button>
         </div>
 
-        <form onSubmit={handleUpdateProfile} className="p-6 space-y-4">
+        <form onSubmit={handleUpdateProfile} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
           {/* Avatar Upload */}
           <div className="flex flex-col items-center gap-2">
             <div className="relative group">
@@ -153,7 +166,33 @@ const SettingsModal = ({ onClose, axiosSecure }) => {
             </div>
           </div>
 
-          <div className="divider text-xs opacity-40 uppercase tracking-widest">Security</div>
+          <div className="divider text-xs opacity-40 uppercase tracking-widest">Verification</div>
+
+          {/* Current Password Verification */}
+          <div className="form-control">
+            <label className="label">
+              <span className="label-text font-semibold text-error">Current Password *</span>
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-base-content/40">
+                <KeyRound size={18} />
+              </div>
+              <input
+                type="password"
+                className="input input-bordered w-full pl-10 border-error/50 focus:outline-error"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Enter current password to verify"
+                required
+                disabled={isUpdating}
+              />
+            </div>
+            <label className="label">
+              <span className="label-text-alt opacity-60">Required to authorize any profile update.</span>
+            </label>
+          </div>
+
+          <div className="divider text-xs opacity-40 uppercase tracking-widest">Change Password</div>
 
           {/* New Password */}
           <div className="form-control">

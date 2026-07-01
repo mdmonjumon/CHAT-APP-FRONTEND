@@ -148,8 +148,24 @@ const ChatPage = () => {
     };
 
     const handleGroupUpdated = (updatedGroup) => {
-      if (selectedConversationId === updatedGroup._id) {
-        setSelectedGroup(updatedGroup);
+      const isParticipant = updatedGroup.participants?.some((p) => {
+        if (!p) return false;
+        if (typeof p === "object") {
+          return p.firebaseUid === user?.uid || p._id === user?.uid;
+        }
+        return p === user?.uid;
+      });
+
+      if (!isParticipant) {
+        if (selectedConversationId === updatedGroup._id) {
+          setSelectedConversationId(null);
+          setSelectedGroup(null);
+          toast.error("You are no longer a member of this group.");
+        }
+      } else {
+        if (selectedConversationId === updatedGroup._id) {
+          setSelectedGroup(updatedGroup);
+        }
       }
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     };

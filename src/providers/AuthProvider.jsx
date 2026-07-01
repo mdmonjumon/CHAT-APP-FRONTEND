@@ -51,7 +51,9 @@ const AuthProvider = ({ children }) => {
       console.log("From authProvider===>", currentUser);
 
       if (currentUser) {
-        const newSocket = io(import.meta.env.VITE_SERVER_LINK);
+        const newSocket = io(import.meta.env.VITE_SERVER_LINK, {
+          transports: ["websocket"],
+        });
         setSocket(newSocket);
 
         newSocket.emit("setup", currentUser.uid);
